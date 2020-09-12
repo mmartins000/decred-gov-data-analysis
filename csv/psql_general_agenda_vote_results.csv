@@ -1,0 +1,6 @@
+id,name,yes,abs,no
+1,fixlnseqlocks,19556,16345,3
+2,headercommitments,22006,13930,13
+3,lnfeatures,22280,13550,110
+4,lnsupport,29106,8610,408
+5,sdiffalgorithm,32765,4666,693
