@@ -2,6 +2,7 @@
 # Author: Marcelo Martins (stakey.club)
 # Version: 0.1
 # 
+# Tested with the following configuration:
 # sessionInfo()
 # R version 3.6.3 (2020-02-29)
 # Platform: x86_64-apple-darwin15.6.0 (64-bit)
@@ -18,9 +19,13 @@
 # [1] '0.84'
 # > packageVersion("gplots")
 # [1] '3.0.4'
+# > packageVersion("rpart")
+# [1] '4.1.15'
+# > packageVersion("rpart.plot")
+# [1] '3.0.8'
 
 # This script requires the following libraries, to install:
-list.of.packages <- c("plyr", "ggplot2", "dplyr", "patchwork", "corrplot", "gplots")
+list.of.packages <- c("plyr", "ggplot2", "dplyr", "patchwork", "corrplot", "gplots", "rpart", "rpart.plot")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 
@@ -35,7 +40,7 @@ library(patchwork)  # 2 charts together
 # Define na.locf function without loading a huge package (zoo)
 na.locf <- function(x) {
   v <- !is.na(x)
-  c(NA, x[v])[cumsum(v)+1]
+  c(NA, x[v])[cumsum(v) + 1]
 }
 
 print_version <- function() {
@@ -47,6 +52,8 @@ print_version <- function() {
   print(paste("patchwork:", packageVersion("patchwork")))
   print(paste("corrplot:", packageVersion("corrplot")))
   print(paste("gplots:", packageVersion("gplots")))
+  print(paste("rpart:", packageVersion("rpart")))
+  print(paste("rpart.plot:", packageVersion("rpart.plot")))
 }
 
 define_variables <- function() {
@@ -78,6 +85,7 @@ define_variables <- function() {
   # General
   str_basedir <<- "decred-gov-data-analysis/csv/"
   str_figuredir <<- "decred-gov-data-analysis/figures/"
+  str_textfilename <<- "dcr_r_results.txt"
   int_final_block <<- 422600
   dbl_dcr_supply_upper_limit <<- 20999999.99800912
   # Colour
@@ -156,26 +164,26 @@ process_dataframes <- function() {
 
   ### Expected vs observed coin issuance
   # Clean up actual coin issuance (dcr_d_actual_coin_issuance)
-  dcr_d_actual_coin_issuance$day <- as.Date(as.character(dcr_d_actual_coin_issuance$day), format="%Y-%m-%d")
+  dcr_d_actual_coin_issuance$day <- as.Date(as.character(dcr_d_actual_coin_issuance$day), format = "%Y-%m-%d")
   dcr_d_actual_coin_issuance <- subset(dcr_d_actual_coin_issuance, day >= str_initial_date & day <= str_final_date)
   dcr_d_actual_coin_issuance$sum_total_reward <- as.numeric(dcr_d_actual_coin_issuance$sum_total_reward)
   dcr_d_actual_coin_issuance$sum_reward <- as.numeric(dcr_d_actual_coin_issuance$sum_reward)
-  dcr_d_actual_coin_issuance$day <- as.Date(as.character(dcr_d_actual_coin_issuance$day), format="%Y-%m-%d") # Yes, again!
+  dcr_d_actual_coin_issuance$day <- as.Date(as.character(dcr_d_actual_coin_issuance$day), format = "%Y-%m-%d") # Yes, again!
   dcr_d_actual_coin_issuance <<- dcr_d_actual_coin_issuance
 
   # Clean up expected coin issuance (dcr_d_expected_coin_issuance)
   dcr_d_expected_coin_issuance <- subset(dcr_b_expected_coin_issuance, select=-c(date, block_height, pow_reward, pos_reward, net_fund))
-  dcr_d_expected_coin_issuance$day <- as.Date(as.character(dcr_d_expected_coin_issuance$day), format="%Y-%m-%d")
+  dcr_d_expected_coin_issuance$day <- as.Date(as.character(dcr_d_expected_coin_issuance$day), format = "%Y-%m-%d")
   dcr_d_expected_coin_issuance <- subset(dcr_d_expected_coin_issuance, day >= str_initial_date & day <= str_final_date)
   dcr_d_expected_coin_issuance <- aggregate(dcr_b_expected_coin_issuance["total_block_reward"], by=dcr_b_expected_coin_issuance["day"], sum)
   dcr_d_expected_coin_issuance <- within(dcr_d_expected_coin_issuance, acc_sum <- cumsum(total_block_reward))
   dcr_d_expected_coin_issuance$total_block_reward <- as.numeric(dcr_d_expected_coin_issuance$total_block_reward)
   dcr_d_expected_coin_issuance$acc_sum <- as.numeric(dcr_d_expected_coin_issuance$acc_sum)
-  dcr_d_expected_coin_issuance$day <- as.Date(as.character(dcr_d_expected_coin_issuance$day), format="%Y-%m-%d") # Yes, again!
+  dcr_d_expected_coin_issuance$day <- as.Date(as.character(dcr_d_expected_coin_issuance$day), format = "%Y-%m-%d") # Yes, again!
   dcr_d_expected_coin_issuance <<- dcr_d_expected_coin_issuance
 
   # Merge both dataframes in dcr_d_expected_actual_issuance
-  dcr_d_expected_actual_issuance <- merge(dcr_d_expected_coin_issuance, dcr_d_actual_coin_issuance, by="day", all=TRUE)
+  dcr_d_expected_actual_issuance <- merge(dcr_d_expected_coin_issuance, dcr_d_actual_coin_issuance, by = "day", all = TRUE)
   colnames(dcr_d_expected_actual_issuance)[2] <- "expected_total_daily_reward"
   colnames(dcr_d_expected_actual_issuance)[3] <- "acc_expected_daily_reward"
   colnames(dcr_d_expected_actual_issuance)[4] <- "actual_total_daily_reward"
@@ -311,8 +319,8 @@ process_dataframes <- function() {
   dcr_usd_price <- subset(dcr_usd_price, Date >= str_initial_date & Date <= str_final_date)
   # Although the URL above specified the beginning of the period as 06-02-2016, there is no data for the first two days do Decred
   # Probably because it wasn't being traded in USD
-  dcr_usd_price <- rbind(data.frame(Date = as.Date("2016-02-09", format="%Y-%m-%d"), Close = 0), dcr_usd_price)
-  dcr_usd_price <- rbind(data.frame(Date = as.Date("2016-02-08", format="%Y-%m-%d"), Close = 0), dcr_usd_price)
+  dcr_usd_price <- rbind(data.frame(Date = as.Date("2016-02-09", format = "%Y-%m-%d"), Close = 0), dcr_usd_price)
+  dcr_usd_price <- rbind(data.frame(Date = as.Date("2016-02-08", format = "%Y-%m-%d"), Close = 0), dcr_usd_price)
   # Continue processing the table
   dcr_usd_price$Close <- as.numeric(as.character(dcr_usd_price$Close))
   colnames(dcr_usd_price)[1] <- "day"
@@ -326,10 +334,10 @@ process_dataframes <- function() {
   btc_usd_price$Date <- as.Date(as.character(btc_usd_price$Date), format = "%Y-%m-%d")
   btc_usd_price <- subset(btc_usd_price, select=-c(Open, High, Low, Adj.Close, Volume))
   btc_difficulty <- read.table(paste0(str_basedir, "difficulty.csv"), header = TRUE, sep = ",")
-  btc_difficulty$X...Timestamp <- format(as.POSIXct(btc_difficulty$X...Timestamp, format="%Y-%m-%d %H:%M:%S"), format="%Y-%m-%d")
+  btc_difficulty$X...Timestamp <- format(as.POSIXct(btc_difficulty$X...Timestamp, format = "%Y-%m-%d %H:%M:%S"), format = "%Y-%m-%d")
   colnames(btc_difficulty)[1] <- "day"
-  btc_table <- merge(btc_usd_price, btc_difficulty, by.x=c("Date"), by.y=c("day"), all=TRUE)
-  btc_table$Date <- as.Date(btc_table$Date, format="%Y-%m-%d")
+  btc_table <- merge(btc_usd_price, btc_difficulty, by.x = c("Date"), by.y = c("day"), all = TRUE)
+  btc_table$Date <- as.Date(btc_table$Date, format = "%Y-%m-%d")
   btc_table$difficulty <- na.locf(btc_table$difficulty)
   btc_table <- subset(btc_table, Date >= str_initial_date & Date <= str_final_date)
   btc_table <- btc_table[complete.cases(btc_table), ]
@@ -344,10 +352,10 @@ process_dataframes <- function() {
 
   # Decred financial return per ticket, in average
   dcr_t_return_usd <- subset(dcr_t_ticket_draw, select=c(block_time, ticket_price, vote_reward, return))
-  dcr_t_return_usd$block_time <- format(as.POSIXct(dcr_t_return_usd$block_time, format='%Y-%m-%d %H:%M:%S'), format='%Y-%m-%d')
+  dcr_t_return_usd$block_time <- format(as.POSIXct(dcr_t_return_usd$block_time, format = '%Y-%m-%d %H:%M:%S'), format = '%Y-%m-%d')
   colnames(dcr_t_return_usd)[1] <- "day"
   dcr_t_return_usd$day <- as.Date(as.character(dcr_t_return_usd$day), format = "%Y-%m-%d")
-  dcr_t_return_usd <- merge(dcr_t_return_usd, dcr_usd_price, by=c("day"), all=TRUE)
+  dcr_t_return_usd <- merge(dcr_t_return_usd, dcr_usd_price, by = c("day"), all = TRUE)
   dcr_t_return_usd <- subset(dcr_t_return_usd, day >= "2016-02-21" & day <= str_final_date)
   dcr_t_return_usd$return_usd <- as.numeric(dcr_t_return_usd$return * dcr_t_return_usd$dcr_price_close)
   dcr_t_return_usd_aggregate <- aggregate(dcr_t_return_usd, by = list(dcr_t_return_usd$day), FUN = mean)
@@ -381,6 +389,10 @@ process_dataframes <- function() {
   #dcr_d_network_funding$day <- as.Date(as.character(dcr_d_network_funding$day), format = "%Y-%m-%d")
   #dcr_d_pos_rewards$day <- as.Date(as.character(dcr_d_pos_rewards$day), format = "%Y-%m-%d")
   #dcr_d_transactions_volume$day <- as.Date(as.character(dcr_d_transactions_volume$day), format = "%Y-%m-%d")
+
+  append_csv_results(dcr_g_voters_block_count_summary)  # Write mode, no append, to reset the file
+  append_text_results(paste("\nAverage block per day:", round(avg_block_per_day, 4)))
+  append_text_results(paste("Average daily ticket pool size:", round(avg_ticket_poolsize, 4)))
 }
 
 gen_dcr_exp_issuance <- function() {
@@ -393,8 +405,8 @@ gen_dcr_exp_issuance <- function() {
   base_block_reward <- 31.19582664
   reduction_factor <- 100/101
 
-  dcr_exp_issuance <- data.frame(date=seq(from=posixct_dcr_genesis_date, to=posixct_dcr_final_date, by=as.difftime("00:05:00", format="%H:%M:%S")))
-  dcr_exp_issuance$day <- as.Date(dcr_exp_issuance$date, format="%Y-%m-%d")
+  dcr_exp_issuance <- data.frame(date = seq(from = posixct_dcr_genesis_date, to = posixct_dcr_final_date, by = as.difftime("00:05:00", format = "%H:%M:%S")))
+  dcr_exp_issuance$day <- as.Date(dcr_exp_issuance$date, format = "%Y-%m-%d")
 
   # Block 0
   total_reward_vector <- c(rep(c(0), times = 1))
@@ -425,7 +437,7 @@ gen_dcr_exp_issuance <- function() {
 
   dcr_exp_issuance$expected_total_reward <- total_reward_vector
   dcr_exp_issuance <<- dcr_exp_issuance
-  dcr_exp_issuance_by_day <- aggregate(dcr_exp_issuance$expected_total_reward, by=dcr_exp_issuance["day"], sum)
+  dcr_exp_issuance_by_day <- aggregate(dcr_exp_issuance$expected_total_reward, by = dcr_exp_issuance["day"], sum)
   dcr_exp_issuance_by_day <- within(dcr_exp_issuance_by_day, acc_sum <- cumsum(x))
   dcr_exp_issuance_by_day$x <- as.numeric(dcr_exp_issuance_by_day$x)
   dcr_exp_issuance_by_day$acc_sum <- as.numeric(dcr_exp_issuance_by_day$acc_sum)
@@ -436,8 +448,8 @@ gen_dcr_exp_issuance <- function() {
 gen_btc_exp_issuance <- function() {
   # This function generates a dataframe with the 
   # expected Bitcoin issuance according to consensus rules
-  btc_exp_issuance <- data.frame(date=seq(from=posixct_btc_genesis_date, to=posixct_dcr_final_date, by=as.difftime("00:10:00", format="%H:%M:%S")))
-  btc_exp_issuance$day <- as.Date(btc_exp_issuance$date, format="%Y-%m-%d")
+  btc_exp_issuance <- data.frame(date = seq(from = posixct_btc_genesis_date, to = posixct_dcr_final_date, by = as.difftime("00:10:00", format = "%H:%M:%S")))
+  btc_exp_issuance$day <- as.Date(btc_exp_issuance$date, format = "%Y-%m-%d")
 
   blocks_until_reduction <- 210000
   total_reductions <- 33   # 0 - 32
@@ -482,16 +494,16 @@ df_expected_dcr_coin_issuance <- function() {
   n_total_reductions <- 0
   block_height <- 0
 
-  df_date <- data.frame(date=seq(from=posixct_genesis_date, to=posixct_final_date, by=as.difftime("00:05:00", format="%H:%M:%S")))
-  df_date$day <- as.Date(df_date$date, format="%Y-%m-%d")
-  df_date$block_height <- as.numeric(seq.int(from=0, to=nrow(df_date)-1))
+  df_date <- data.frame(date = seq(from = posixct_genesis_date, to = posixct_final_date, by = as.difftime("00:05:00", format = "%H:%M:%S")))
+  df_date$day <- as.Date(df_date$date, format = "%Y-%m-%d")
+  df_date$block_height <- as.numeric(seq.int(from = 0, to = nrow(df_date) - 1))
 
   df_expected <<- data.frame(
-                            total_block_reward=numeric(),
-                            pow_reward=numeric(),
-                            pos_reward=numeric(),
-                            net_fund=numeric(),
-                            stringsAsFactors=FALSE)
+                            total_block_reward = numeric(),
+                            pow_reward = numeric(),
+                            pos_reward = numeric(),
+                            net_fund = numeric(),
+                            stringsAsFactors = FALSE)
   
   # Genesis (block 0)
   total_block_reward <- as.numeric(0)
@@ -560,7 +572,7 @@ df_expected_dcr_coin_issuance <- function() {
   df_date$acc_sum <- df_expected2$acc_sum
   write.csv(df_date, paste0(str_basedir, "dcr-expected-block-date_and_coin_issuance.csv"), row.names = FALSE)
   df_dcr_expected_coin_issuance <- df_date
-  dcr_d_expected_coin_issuance <- aggregate(df_date["total_block_reward"], by=df_date["day"], sum)
+  dcr_d_expected_coin_issuance <- aggregate(df_date["total_block_reward"], by = df_date["day"], sum)
   dcr_d_expected_coin_issuance <- within(dcr_d_expected_coin_issuance, acc_sum <- cumsum(total_block_reward))
   colnames(dcr_d_expected_coin_issuance)[2] <- "expected_total_reward"
   colnames(dcr_d_expected_coin_issuance)[3] <- "acc_expected_reward"
@@ -588,11 +600,15 @@ calc_hip1 <- function() {
   hip1_part1_chisq <<- hip1_part1_chisq
   hip1_part2_corr <<- hip1_part2_corr
   hip1_part2_chisq <<- hip1_part2_chisq
+
+  append_text_results(paste("Hip. 1 N:", nrow(hip1)))
+  append_text_results(paste("Hip. 1 Correlation:", round(hip1_corr, 4)))
+  append_text_results(paste("Hip. 1 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip1_chisq$statistic), "p-value:", hip1_chisq$p.value, "\n"))
 }
 
 # Hip. 2: DCR liquidity is not related to price fall
 calc_hip2 <- function() {
-  hip2 <- merge(x = dcr_usd_price, y = dcr_d_circ_staked[ , c("day", "perc_staked")], by = "day", all.x=TRUE)
+  hip2 <- merge(x = dcr_usd_price, y = dcr_d_circ_staked[ , c("day", "perc_staked")], by = "day", all.x = TRUE)
   hip2 <- subset(hip2, day >= "2016-02-10" & day <= str_final_date)   # chisq.test() returns error with 0 values in sample
   hip2$dcr_price_close <- as.numeric(hip2$dcr_price_close)
   hip2$perc_staked <- as.numeric(hip2$perc_staked)
@@ -615,8 +631,8 @@ calc_hip2 <- function() {
   str_hip2_fin_start_date <- "2016-02-21"  # When financial returns started
   str_hip2_fin_cut_date <- "2017-02-21"    # On eyear after financial returns started to disregard the initial rise on staking from 0
   hip2_fin <- dcr_d_circ_staked
-  hip2_fin <- merge(x = hip2_fin, y = dcr_t_return_usd_aggregate[, c("day", "return", "return_usd")], by = "day", all.x=TRUE)
-  hip2_fin <- subset(hip2_fin, day >= str_hip2_fin_start_date & day < str_final_date)
+  hip2_fin <- merge(x = hip2_fin, y = dcr_t_return_usd_aggregate[, c("day", "return", "return_usd")], by = "day", all.x = TRUE)
+  hip2_fin <- subset(hip2_fin, day >= str_hip2_fin_start_date & day <= str_final_date)
   hip2_fin <- subset(hip2_fin, select=-c(circulation_coins, staked_coins))
   hip2_fin <<- hip2_fin
 
@@ -632,12 +648,16 @@ calc_hip2 <- function() {
   hip2_fin_part2_corr <<- hip2_fin_part2_corr
   hip2_fin_part2_chisq <<- hip2_fin_part2_chisq
   hip2_fin_part2 <<- hip2_fin_part2
+
+  append_text_results(paste("Hip. 2 N:", nrow(hip2)))
+  append_text_results(paste("Hip. 2 Correlation:", round(hip2_corr, 4)))
+  append_text_results(paste("Hip. 2 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip2_chisq$statistic), "p-value:", hip2_chisq$p.value, "\n"))
 }
 
 # Hip. 3: PoW and PoS security are not related to price fall
 calc_hip3_dcr <- function() {
-  hip3_dcr <- merge(x = dcr_usd_price, y = dcr_d_circ_staked[ , c("day", "perc_staked")], by = "day", all.x=TRUE)
-  hip3_dcr <- merge(x = hip3_dcr, y = dcr_d_fees_diff_tx[ , c("day", "dcr_avg_difficulty")], by = "day", all.x=TRUE)
+  hip3_dcr <- merge(x = dcr_usd_price, y = dcr_d_circ_staked[ , c("day", "perc_staked")], by = "day", all.x = TRUE)
+  hip3_dcr <- merge(x = hip3_dcr, y = dcr_d_fees_diff_tx[ , c("day", "dcr_avg_difficulty")], by = "day", all.x = TRUE)
   hip3_dcr <- subset(hip3_dcr, day >= str_initial_date & day <= str_final_date)
   hip3_dcr$dcr_price_close <- as.numeric(hip3_dcr$dcr_price_close)
   hip3_dcr$dcr_avg_difficulty <- as.numeric(hip3_dcr$dcr_avg_difficulty)
@@ -660,6 +680,10 @@ calc_hip3_dcr <- function() {
   hip3_dcr_part1_chisq <<- hip3_dcr_part1_chisq
   hip3_dcr_part2_corr <<- hip3_dcr_part2_corr
   hip3_dcr_part2_chisq <<- hip3_dcr_part2_chisq
+
+  append_text_results(paste("Hip. 3 DCR N:", nrow(hip3_dcr)))
+  append_text_results(paste("Hip. 3 DCR Correlation:", round(as.numeric(as.character(hip3_dcr_corr$estimate)), 4)))
+  append_text_results(paste("Hip. 3 DCR Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip3_dcr_chisq$statistic), "p-value:", hip3_dcr_chisq$p.value, "\n"))
 }
 
 calc_hip3_btc <- function() {
@@ -683,6 +707,10 @@ calc_hip3_btc <- function() {
   hip3_btc_part1_chisq <<- hip3_btc_part1_chisq
   hip3_btc_part2_corr <<- hip3_btc_part2_corr
   hip3_btc_part2_chisq <<- hip3_btc_part2_chisq
+
+  append_text_results(paste("Hip. 3 BTC N:", nrow(hip3_btc)))
+  append_text_results(paste("Hip. 3 BTC Correlation:", round(hip3_btc_corr, 4)))
+  append_text_results(paste("Hip. 3 BTC Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip3_btc_chisq$statistic), "p-value:", hip3_btc_chisq$p.value, "\n"))
 }
 
 # Hip. 4: Tickets are drawn as defined in the official documentation (https://docs.decred.org/proof-of-stake/overview/)
@@ -697,7 +725,7 @@ calc_hip4 <- function() {
   #actual <- c(hip4[10,5], hip4[20,5], hip4[28,5], hip4[45,5], hip4[60,5], hip4[90,5], round(hip4[144,4], 3))
   #actual <- c(0.273, 0.490, 0.617, 0.790, 0.877, 0.958, 0.007)
   actual <- c(hip4[10,6], hip4[20,6], hip4[28,6], hip4[45,6], hip4[60,6], hip4[90,6], round(hip4[144,4], 3))
-  hip4_x = data.frame(actual=as.numeric(actual), expected=as.numeric(expected))
+  hip4_x = data.frame(actual = as.numeric(actual), expected = as.numeric(expected))
   hip4_corr <- with(hip4_x, cor(as.numeric(actual), as.numeric(expected)))
   hip4_chisq <- chisq.test(hip4_x)
   expected <<- expected
@@ -705,11 +733,15 @@ calc_hip4 <- function() {
   hip4_corr <<- hip4_corr
   hip4_chisq <<- hip4_chisq
   hip4 <<- hip4
+
+  append_text_results(paste("Hip. 4 N:", length(actual)))
+  append_text_results(paste("Hip. 4 Correlation:", round(hip4_corr, 4)))
+  append_text_results(paste("Hip. 4 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip4_chisq$statistic), "p-value:", hip4_chisq$p.value, "\n"))
 }
 
 # Hip. 5: Privacy participation is not related to price fall
 calc_hip5 <- function() {
-  hip5 <- merge(dcr_d_privacy_mix, dcr_usd_price, by.x=c("day"), by.y=c("day"), all=TRUE)
+  hip5 <- merge(dcr_d_privacy_mix, dcr_usd_price, by.x = c("day"), by.y = c("day"), all = TRUE)
   hip5 <- subset(hip5, day >= str_privacy_initial_date & day <= str_privacy_final_date)
   rownames(hip5) <- 1:nrow(hip5)
   hip5_corr <- with(hip5, cor(as.numeric(dcr_price_close), as.numeric(private_mix_rate)))
@@ -717,6 +749,10 @@ calc_hip5 <- function() {
   hip5_corr <<- hip5_corr
   hip5_chisq <<- hip5_chisq
   hip5 <<- hip5
+
+  append_text_results(paste("Hip. 5 N:", nrow(hip5)))
+  append_text_results(paste("Hip. 5 Correlation:", round(hip5_corr, 4)))
+  append_text_results(paste("Hip. 5 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip5_chisq$statistic), "p-value:", hip5_chisq$p.value, "\n"))
 }
 
 # Hip. 6: Actual coin issuance is related to expected coin issuance
@@ -729,6 +765,11 @@ calc_hip6 <- function() {
   hip6_corr <<- hip6_corr
   hip6_chisq <<- hip6_chisq
   hip6 <<- hip6
+
+  append_text_results(paste("Hip. 6", hip6[nrow(hip6),1], "Expected coins:", hip6[nrow(hip6),3], "- Observed coins:", hip6[nrow(hip6),5]))
+  append_text_results(paste("Hip. 6 N:", nrow(hip6)))
+  append_text_results(paste("Hip. 6 Correlation:", round(hip6_corr, 4)))
+  append_text_results(paste("Hip. 6 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip6_chisq$statistic), "p-value:", hip6_chisq$p.value, "\n"))
 }
 
 # Hip. 7: Decred founders' DCR expenditure is related to price variance
@@ -737,8 +778,8 @@ calc_hip7 <- function() {
   hip7['day'] = as.Date(as.character(dcr_b_issuance_pow_reward$block_time), format = "%Y-%m-%d")
   hip7 <- subset(hip7, select=-c(block_time, tx_type, script_addresses, pow_reward))
   hip7 <- unique(hip7[, 1:2])
-  hip7 <- merge(x=hip7, y=dcr_usd_price, by="day")
-  hip7 <- merge(x=hip7, y=dcr_1_block_founders_dest, by="block_height")
+  hip7 <- merge(x = hip7, y = dcr_usd_price, by="day")
+  hip7 <- merge(x = hip7, y = dcr_1_block_founders_dest, by = "block_height")
   rownames(hip7) <- 1:nrow(hip7)
 
   # Maximum exchange rate in USD for Decred in 2016
@@ -748,7 +789,7 @@ calc_hip7 <- function() {
 
 # Hip. 8: Decred price variance is related to Bitcoin price variance
 calc_hip8 <- function() {
-  hip8 <- merge(dcr_usd_price, btc_usd_price, by.x=c("day"), by.y=c("day"), all=TRUE)
+  hip8 <- merge(dcr_usd_price, btc_usd_price, by.x = c("day"), by.y = c("day"), all = TRUE)
   hip8 <- subset(hip8, day >= str_genesis_date & day <= str_final_date)
   rownames(hip8) <- 1:nrow(hip8)
   hip8_corr <- with(hip8, cor(as.numeric(dcr_price_close), as.numeric(btc_price_close)))
@@ -771,11 +812,23 @@ calc_hip8 <- function() {
   hip8_part2_chisq <<- hip8_part2_chisq
   hip8_part1 <<- hip8_part1
   hip8_part2 <<- hip8_part2
+
+  append_text_results(paste("Hip. 8 N:", nrow(hip8)))
+  append_text_results(paste("Hip. 8 Correlation:", round(hip8_corr, 4)))
+  append_text_results(paste("Hip. 8 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip8_chisq$statistic), "p-value:", hip8_chisq$p.value, "\n"))
+
+  append_text_results(paste("Hip. 8 Part 1 N:", nrow(hip8_part1)))
+  append_text_results(paste("Hip. 8 Part 1 Correlation:", round(hip8_part1_corr, 4)))
+  append_text_results(paste("Hip. 8 Part 1 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip8_part1_chisq$statistic), "p-value:", hip8_part1_chisq$p.value, "\n"))
+
+  append_text_results(paste("Hip. 8 Part 2 N:", nrow(hip8_part2)))
+  append_text_results(paste("Hip. 8 Part 2 Correlation:", round(hip8_part2_corr, 4)))
+  append_text_results(paste("Hip. 8 Part 2 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip8_part2_chisq$statistic), "p-value:", hip8_part2_chisq$p.value, "\n"))
 }
 
 #### Econ Model
 
-# This function is used inside calc_econ_model()
+# Called inside calc_econ_model()
 cor.mtest <- function(mat) {
   mat <- as.matrix(mat)
   n <- ncol(mat)
@@ -791,7 +844,25 @@ cor.mtest <- function(mat) {
   p.mat   # Do not remove
 }
 
-# Extraction for econometric model:
+# Called inside calc_econ_model()
+r_tree <- function() {
+  library(rpart)       # to create regression trees
+  library(rpart.plot)  # to plot regression trees
+
+  r_dcr_price <- rpart(
+    formula = dcr_price_close ~ .,
+    data    = e2_p2,
+    method  = "anova", 
+    control = list(minsplit = 10, maxdepth = 12, xval = 10)
+  )
+
+  append_text_results("\nRegression Tree Summary:\n")
+  r_tree_summary <<- rpart.rules(r_dcr_price, cover = TRUE, roundint = FALSE, digits = 4, varlen = 0, faclen = 0)
+  save_figure(rpart.plot(r_dcr_price, roundint = FALSE, digits = 4), "econ_model_regression_tree_figure.png", 1024, 768)
+  sink_text_results(r_tree_summary)
+}
+
+# OLS model:
 calc_econ_model <- function() {
   econ_model <- dcr_usd_price
   econ_model$day <- as.Date(as.character(econ_model$day), format = "%Y-%m-%d")
@@ -812,6 +883,7 @@ calc_econ_model <- function() {
   e2_p1_cor_mat <- as.matrix(cor(e2_p1))
   e2_p2_cor_mat <- as.matrix(cor(e2_p2))
   e2 <<- e2
+  e2_p2 <<- e2_p2
   library(corrplot)
   
   # Matrix of the p-value of the correlation
@@ -819,7 +891,7 @@ calc_econ_model <- function() {
   p2.mat <- cor.mtest(e2_p2)
 
   ## Heatmap
-  econ_model_cor <- cor(e2)
+  econ_model_cor <- cor(e2_p2)
   colnames(econ_model_cor) <- c("Price", "Coin Issuance", "Avg Hashrate", "Staked Percentage")
   rownames(econ_model_cor) <- c("Price", "Coin Issuance", "Avg Hashrate", "Staked Percentage")
   econ_model_cor <<- econ_model_cor
@@ -841,10 +913,10 @@ calc_econ_model <- function() {
       srtCol = 25), "econ_model_heat_figure.png", 1024, 768)
 
   ## Linear model
-  linear_model_results <- lm(dcr_price_close~., data = e2)
+  linear_model_results <- lm(dcr_price_close ~ ., data = e2_p2)
   linear_model_results_summary <- print(summary(linear_model_results))
 
-  linear_model <- ggplot(e2_p2, aes(x = dcr_price_close, y = perc_staked)) + 
+  linear_model_price_staked <- ggplot(e2_p2, aes(x = dcr_price_close, y = perc_staked)) + 
     geom_point() +
     xlab("DCR Price (USD) Close") +
     scale_y_continuous(
@@ -852,91 +924,54 @@ calc_econ_model <- function() {
     ) +
     theme_bw() +
     theme(
-      text = element_text(size=24),
+      text = element_text(size = 24),
       axis.title.y = element_text(color = g_color1)
     ) +
     stat_smooth(method = "lm", col = g_color2)
+  save_figure(linear_model_price_staked, "econ_model_linear_price_staked_figure.png", 1024, 768)
 
-  save_figure(linear_model, "econ_model_linear_figure.png", 1024, 768)
+  linear_model_price_hashrate <- ggplot(e2_p2, aes(x = dcr_price_close, y = obs_avg_hashrate)) + 
+    geom_point() +
+    xlab("DCR Price (USD) Close") +
+    scale_y_continuous(
+        name = "Average Hashrate"                              # first axis
+    ) +
+    theme_bw() +
+    theme(
+      text = element_text(size = 24),
+      axis.title.y = element_text(color = g_color1)
+    ) +
+    stat_smooth(method = "lm", col = g_color2)
+  save_figure(linear_model_price_hashrate, "econ_model_linear_price_hashrate_figure.png", 1024, 768)
+
   linear_model_results_summary <<- linear_model_results_summary
   linear_model_results <<- linear_model_results
-}
-
-# Save results to a text file
-output_text_results <- function() {
-  output_file = paste0(str_figuredir, "dcr_r_results.txt")
   
-  write.csv(dcr_g_voters_block_count_summary, output_file, row.names = FALSE)
+  append_text_results("\nLinear Model Results Summary:\n")
+  sink_text_results(linear_model_results_summary)
 
-  write(paste("\nAverage block per day:", round(avg_block_per_day, 4)), file=output_file, append=TRUE)
-  write(paste("Average daily ticket pool size:", round(avg_ticket_poolsize, 4)), file=output_file, append=TRUE)
-
-  write(paste("\nHipothesis:"), file=output_file, append=TRUE)
-  write(paste("-----------"), file=output_file, append=TRUE)
-  write(paste("Hip. 1 N:", nrow(hip1)), file=output_file, append=TRUE)
-  write(paste("Hip. 1 Correlation:", round(hip1_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 1 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip1_chisq$statistic), "p-value:", hip1_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 2 N:", nrow(hip2)), file=output_file, append=TRUE)
-  write(paste("Hip. 2 Correlation:", round(hip2_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 2 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip2_chisq$statistic), "p-value:", hip2_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 3 BTC N:", nrow(hip3_btc)), file=output_file, append=TRUE)
-  write(paste("Hip. 3 BTC Correlation:", round(hip3_btc_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 3 BTC Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip3_btc_chisq$statistic), "p-value:", hip3_btc_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 3 DCR N:", nrow(hip3_dcr)), file=output_file, append=TRUE)
-  write(paste("Hip. 3 DCR Correlation:", round(as.numeric(as.character(hip3_dcr_corr$estimate)), 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 3 DCR Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip3_dcr_chisq$statistic), "p-value:", hip3_dcr_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 4 N:", length(actual)), file=output_file, append=TRUE)
-  write(paste("Hip. 4 Correlation:", round(hip4_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 4 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip4_chisq$statistic), "p-value:", hip4_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 5 N:", nrow(hip5)), file=output_file, append=TRUE)
-  write(paste("Hip. 5 Correlation:", round(hip5_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 5 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip5_chisq$statistic), "p-value:", hip5_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 6", hip6[nrow(hip6),1], "Expected coins:", hip6[nrow(hip6),3], "- Observed coins:", hip6[nrow(hip6),5]), file=output_file, append=TRUE)
-  write(paste("Hip. 6 N:", nrow(hip6)), file=output_file, append=TRUE)
-  write(paste("Hip. 6 Correlation:", round(hip6_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 6 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip6_chisq$statistic), "p-value:", hip6_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 8 N:", nrow(hip8)), file=output_file, append=TRUE)
-  write(paste("Hip. 8 Correlation:", round(hip8_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 8 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip8_chisq$statistic), "p-value:", hip8_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 8 Part 1 N:", nrow(hip8_part1)), file=output_file, append=TRUE)
-  write(paste("Hip. 8 Part 1 Correlation:", round(hip8_part1_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 8 Part 1 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip8_part1_chisq$statistic), "p-value:", hip8_part1_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 8 Part 2 N:", nrow(hip8_part2)), file=output_file, append=TRUE)
-  write(paste("Hip. 8 Part 2 Correlation:", round(hip8_part2_corr, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 8 Part 2 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip8_part2_chisq$statistic), "p-value:", hip8_part2_chisq$p.value, "\n"), file=output_file, append=TRUE)
-
-  write(paste("Hip. 9 N Proposals:", nrow(dcr_g_vote_total_number)), file=output_file, append=TRUE)
-  write(paste("Hip. 9 Average daily ticket pool size:", round(avg_ticket_poolsize, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 9 Average proposal turnout:", round(avg_proposal_turnout, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 9 Average proposal approval:", round(avg_proposal_approval, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 9 Prososals with different winning days:", round(avg_proposal_approval, 4)), file=output_file, append=TRUE)
-
-  write(paste("Hip. 9 N Agendas:", nrow(dcr_g_vote_total_number)), file=output_file, append=TRUE)
-  write(paste("Hip. 9 Average daily ticket pool size:", round(avg_ticket_poolsize, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 9 Average proposal turnout:", round(avg_proposal_turnout, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 9 Average proposal approval:", round(avg_proposal_approval, 4)), file=output_file, append=TRUE)
-  write(paste("Hip. 9 Prososals with different winning days:", round(avg_proposal_approval, 4)), file=output_file, append=TRUE)
-
-  write(paste("\nBTC DCR Comparison: DCR:", nrow(dcr_exp_issuance_by_day), " - BTC: ", nrow(btc_exp_issuance_by_day)), file=output_file, append=TRUE)
-  write(paste("BTC DCR Comparison: Last: DCR:", dcr_exp_issuance_by_day[nrow(dcr_exp_issuance_by_day):nrow(dcr_exp_issuance_by_day),3], " - BTC: ", btc_exp_issuance_by_day[nrow(btc_exp_issuance_by_day):nrow(btc_exp_issuance_by_day),3]), file=output_file, append=TRUE)
-
-  write(paste("\nLinear Model Results Summary:\n", linear_model_results_summary), file=output_file, append=TRUE)
-
-  # Copy filename to global variable file_list
-  file_list <- c(file_list, output_file)
-  file_list <<- file_list
+  r_tree()
 }
 
-### Function to generate graphs
+### Functions to save text to file
+append_text_results <- function(msg) {
+  output_file = paste0(str_figuredir, str_textfilename)
+  write(msg, file = output_file, append = TRUE)
+}
+
+append_csv_results <- function(msg) {
+  output_file = paste0(str_figuredir, str_textfilename)
+  write.csv(msg, output_file, row.names = FALSE)
+}
+
+sink_text_results <- function(msg) {
+  output_file = paste0(str_figuredir, str_textfilename)
+  sink(file = output_file, append = TRUE)
+  print(msg)
+  sink()
+}
+
+### Function to generate figures
 save_figure <- function(hip_df, hip_filename, w, h) {
   png(filename = paste0(str_figuredir, hip_filename),
     width = w, height = h, units = "px", pointsize = 16,
@@ -952,21 +987,21 @@ save_figure <- function(hip_df, hip_filename, w, h) {
 # Graph Hip 1:
 gen_graph_hip1 <- function() {
 coeff <- 100
-hip1_figure <- ggplot(hip1, aes(x=as.Date(day, format= "%Y-%m-%d"), by = "year")) +
-  geom_line(data = hip1, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(circulation_coins)), size=0.4, color=g_color1) +
-  geom_line(data = hip1, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(perc_staked * 100000 * coeff)), size=0.4, color=g_color2) +
+hip1_figure <- ggplot(hip1, aes(x = as.Date(day, format = "%Y-%m-%d"), by = "year")) +
+  geom_line(data = hip1, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(circulation_coins)), size = 0.4, color = g_color1) +
+  geom_line(data = hip1, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(perc_staked * 100000 * coeff)), size = 0.4, color  =g_color2) +
   xlab("Time") +
   scale_y_continuous(
       # labels = scales::comma,
       labels = function(x) format(x, big.mark = " ", scientific = FALSE),
-      limits=c(0, 12000000),
-      breaks=seq(0, 12000000, by = 2000000),
+      limits = c(0, 12000000),
+      breaks = seq(0, 12000000, by = 2000000),
       name = "Issued Coins",                              # first axis
-      sec.axis = sec_axis(~./100000, name="Staked percentage")      # second axis
+      sec.axis = sec_axis(~ . / 100000, name = "Staked percentage")      # second axis
   ) +
   theme_bw() +
   theme(
-    text = element_text(size=24),
+    text = element_text(size = 24),
     axis.title.y = element_text(color = g_color1),
     axis.title.y.right = element_text(color = g_color2)
   )
@@ -977,18 +1012,18 @@ hip1_figure <- ggplot(hip1, aes(x=as.Date(day, format= "%Y-%m-%d"), by = "year")
 # Graph Hip 2:
 gen_graph_hip2 <- function() {
   coeff <- 100
-  hip2_figure <- ggplot(hip2, aes(x=as.Date(day, format = "%Y-%m-%d"), by = "year")) +
-  geom_line(data = hip2, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(dcr_price_close)), size=0.4, color=g_color1) +
-  geom_line(data = hip2, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(perc_staked * coeff)), size=0.4, color=g_color2) +
+  hip2_figure <- ggplot(hip2, aes(x = as.Date(day, format = "%Y-%m-%d"), by = "year")) +
+  geom_line(data = hip2, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(dcr_price_close)), size = 0.4, color = g_color1) +
+  geom_line(data = hip2, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(perc_staked * coeff)), size = 0.4, color = g_color2) +
   xlab("Time") +
   # ggtitle("Price variance and percent staked") +
   scale_y_continuous(
       name = "Price (Close) in USD",                             # first axis
-      sec.axis = sec_axis(~., name="Staked percentage")          # second axis
+      sec.axis = sec_axis(~ ., name = "Staked percentage")          # second axis
   ) +
   theme_bw() +
   theme(
-    text = element_text(size=24),
+    text = element_text(size = 24),
     axis.title.y = element_text(color = g_color1),
     axis.title.y.right = element_text(color = g_color2)
   )
@@ -998,26 +1033,26 @@ gen_graph_hip2 <- function() {
 
 gen_graph_hip2_fin <- function() {
 coeff <- 10
-hip2_fin_figure <- ggplot(hip2_fin, aes(x=as.Date(day, format= "%Y-%m-%d"), by = "year")) +
-  geom_line(data = hip2_fin, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(return_usd), color="Return in USD"), size=0.4) +
-  geom_line(data = hip2_fin, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(perc_staked * coeff), color="Staked percentage"), size=0.4) +
-  geom_line(data = hip2_fin, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(return * coeff), color="ROI"), size=0.4) +
+hip2_fin_figure <- ggplot(hip2_fin, aes(x = as.Date(day, format = "%Y-%m-%d"), by = "year")) +
+  geom_line(data = hip2_fin, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(return_usd), color = "Return in USD"), size = 0.4) +
+  geom_line(data = hip2_fin, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(perc_staked * coeff), color = "Staked percentage"), size = 0.4) +
+  geom_line(data = hip2_fin, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(return * coeff), color = "ROI"), size = 0.4) +
   scale_color_manual(name = "Return", values = c("Return in USD" = g_color1, "Staked percentage" = g_color2, "ROI" = g_color4)) +
   xlab("Time") +
   scale_y_continuous(
       # labels = scales::comma,
       labels = function(x) format(x, big.mark = " ", scientific = FALSE),
-      limits=c(0, 10),
-      breaks=seq(0, 10, by = 1),
+      limits = c(0, 10),
+      breaks = seq(0, 10, by = 1),
       name = "Return in USD per ticket, in average",            # first axis
-      sec.axis = sec_axis(~./10, name="Staked percentage", breaks=seq(0, 1, by = 0.1))      # second axis
+      sec.axis = sec_axis(~ . / 10, name = "Staked percentage", breaks = seq(0, 1, by = 0.1))      # second axis
   ) +
   theme_bw() +
   theme(
-    text = element_text(size=24),
+    text = element_text(size = 24),
     axis.title.y = element_text(color = g_color1),
     axis.title.y.right = element_text(color = g_color2),
-    legend.position="bottom"
+    legend.position = "bottom"
   )
   save_figure(hip2_fin_figure, "hip2_fin_figure.png", 1024, 768)
 }
@@ -1026,21 +1061,21 @@ hip2_fin_figure <- ggplot(hip2_fin, aes(x=as.Date(day, format= "%Y-%m-%d"), by =
 gen_graph_hip3_dcr <- function() {
   options(scipen = 3)
   coeff <- 1000000000
-  hip3_dcr_figure <- ggplot(hip3_dcr, aes(x=as.Date(day, format= "%Y-%m-%d"), by = "year")) +
-    geom_line(data = hip3_dcr, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(dcr_price_close)), size=0.4, color=g_color1) +
-    geom_line(data = hip3_dcr, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(dcr_avg_difficulty / coeff)), size=0.4, color=g_color2) +
+  hip3_dcr_figure <- ggplot(hip3_dcr, aes(x = as.Date(day, format = "%Y-%m-%d"), by = "year")) +
+    geom_line(data = hip3_dcr, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(dcr_price_close)), size = 0.4, color = g_color1) +
+    geom_line(data = hip3_dcr, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(dcr_avg_difficulty / coeff)), size = 0.4, color = g_color2) +
     xlab("Time") +
     # ggtitle("Price variance and PoW security") +
     scale_y_continuous(
         name = "Price (Close) in USD",                                     # first axis
-        sec.axis = sec_axis(~.*coeff, name="Network (block) difficulty")   # second axis
+        sec.axis = sec_axis(~ . * coeff, name = "Network (block) difficulty")   # second axis
     ) +
     theme_bw() +
-    geom_vline(xintercept=as.Date('2018-06-01', format="%Y-%m-%d"), colour=g_color1, linetype = "dashed") +
-    annotate("text", x=as.Date('2018-06-01', format="%Y-%m-%d"), y=18, label="Before ASIC devices\n", size=5, colour=g_color3, angle=90) +
-    annotate("text", x=as.Date('2018-06-01', format="%Y-%m-%d"), y=18, label="\nAfter ASIC devices", size=5, colour=g_color2, angle=90) +
+    geom_vline(xintercept = as.Date('2018-06-01', format = "%Y-%m-%d"), colour = g_color1, linetype = "dashed") +
+    annotate("text", x = as.Date('2018-06-01', format = "%Y-%m-%d"), y = 18, label = "Before ASIC devices\n", size = 5, colour = g_color3, angle = 90) +
+    annotate("text", x = as.Date('2018-06-01', format = "%Y-%m-%d"), y = 18, label = "\nAfter ASIC devices", size = 5, colour = g_color2, angle = 90) +
     theme(
-      text = element_text(size=24),
+      text = element_text(size = 24),
       axis.title.y = element_text(color = g_color1),
       axis.title.y.right = element_text(color = g_color2)
     )
@@ -1051,9 +1086,9 @@ gen_graph_hip3_dcr <- function() {
 gen_graph_hip3_btc <- function() {
   options(scipen = 3)
   coeff <- 1000000000
-  hip3_btc_figure <- ggplot(hip3_btc, aes(x=as.Date(day, format= "%Y-%m-%d"), by = "year")) +
-    geom_line(data = hip3_btc, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(btc_price_close)), size=0.4, color=g_color1) +
-    geom_line(data = hip3_btc, aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(btc_difficulty / coeff)), size=0.4, color=g_color2) +
+  hip3_btc_figure <- ggplot(hip3_btc, aes(x = as.Date(day, format = "%Y-%m-%d"), by = "year")) +
+    geom_line(data = hip3_btc, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(btc_price_close)), size = 0.4, color = g_color1) +
+    geom_line(data = hip3_btc, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(btc_difficulty / coeff)), size = 0.4, color = g_color2) +
     xlab("Time") +
     # ggtitle("Price variance and PoW security") +
     scale_y_continuous(
@@ -1061,10 +1096,10 @@ gen_graph_hip3_btc <- function() {
         sec.axis = sec_axis(~.*coeff, name="Network (block) difficulty")   # second axis
     ) +
     theme_bw() +
-    geom_vline(xintercept=as.Date('2016-07-09', format="%Y-%m-%d"), colour=g_color1, linetype = "dashed") +
-    annotate("text", x=as.Date('2016-07-09', format="%Y-%m-%d"), y=3600, label="Third Bitcoin halving\n", size=5, colour=g_color2, angle=90) +
+    geom_vline(xintercept = as.Date('2016-07-09', format = "%Y-%m-%d"), colour = g_color1, linetype = "dashed") +
+    annotate("text", x = as.Date('2016-07-09', format = "%Y-%m-%d"), y = 3600, label = "Third Bitcoin halving\n", size = 5, colour = g_color2, angle = 90) +
     theme(
-      text = element_text(size=24),
+      text = element_text(size = 24),
       axis.title.y = element_text(color = g_color1),
       axis.title.y.right = element_text(color = g_color2)
     )
@@ -1080,20 +1115,20 @@ gen_graph_hip4 <- function() {
   id_labels <- data.frame(x_points, y_points)
   id_labels$label <- paste(id_labels$x_points, "days =", id_labels$y_points)
 
-  hip4_figure <- ggplot(hip4, aes(x=days_to_draw_roundup, y=perc_acc_sum)) +
-    geom_line(data = hip4, aes(x=as.numeric(days_to_draw_roundup), y=as.numeric(perc_acc_sum)), size=0.5, color=g_color1) +
-    scale_x_continuous(limits=c(1, 143), breaks=c(0, 20, 40, 60, 80, 100, 120, 140)) +
+  hip4_figure <- ggplot(hip4, aes(x = days_to_draw_roundup, y = perc_acc_sum)) +
+    geom_line(data = hip4, aes(x = as.numeric(days_to_draw_roundup), y = as.numeric(perc_acc_sum)), size = 0.5, color = g_color1) +
+    scale_x_continuous(limits = c(1, 143), breaks = c(0, 20, 40, 60, 80, 100, 120, 140)) +
     # ggtitle("Cumulative frequency of drawn tickets") +
     xlab("Days") +
     ylab("Ticket vote chance") +
     theme_bw() +
     # colour=factor(y_points) 
-    geom_point(data=id_labels, aes(x=x_points, y=y_points, size=3.0), color=g_color2) +
+    geom_point(data = id_labels, aes(x = x_points, y = y_points, size = 3.0), color = g_color2) +
     theme(
-      text = element_text(size=24),
-      legend.position="none"
+      text = element_text(size = 24),
+      legend.position = "none"
     ) +
-    geom_text(data=id_labels, aes(x=x_points, y=y_points, label=label), size=8, hjust = "left", nudge_x = +3)
+    geom_text(data=id_labels, aes(x = x_points, y = y_points, label = label), size = 8, hjust = "left", nudge_x = +3)
 
   save_figure(hip4_figure, "hip4_figure.png", 1024, 768)
 }
@@ -1101,19 +1136,18 @@ gen_graph_hip4 <- function() {
 # Graph Hip 5:
 gen_graph_hip5 <- function() {
   coeff <- 1000
-  hip5_figure <- ggplot(hip5, aes(x=as.Date(day, format= "%Y-%m-%d"), by = "year")) +
-    # geom_line(data = hip5, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(count_tx)), size=0.4, color=g_color1) +
-    geom_line(data = hip5, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(dcr_price_close)), size=0.4, color=g_color1) +
-    geom_line(data = hip5, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(private_mix_rate / coeff)), size=0.4, color=g_color2) +
+  hip5_figure <- ggplot(hip5, aes(x = as.Date(day, format = "%Y-%m-%d"), by = "year")) +
+    geom_line(data = hip5, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(dcr_price_close)), size = 0.4, color = g_color1) +
+    geom_line(data = hip5, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(private_mix_rate / coeff)), size = 0.4, color = g_color2) +
     xlab("Time") +
     # ggtitle("Transaction count and privacy mix rate") +
     scale_y_continuous(
         name = "Price (Close) in USD",                              # first axis
-        sec.axis = sec_axis(~.*coeff, name="Privacy mix rate")      # second axis
+        sec.axis = sec_axis(~. * coeff, name = "Privacy mix rate")      # second axis
     ) +
     theme_bw() +
     theme(
-      text = element_text(size=24),
+      text = element_text(size = 24),
       axis.title.y = element_text(color = g_color1),
       axis.title.y.right = element_text(color = g_color2)
     )
@@ -1126,8 +1160,8 @@ gen_graph_hip6 <- function() {
   coeff <- 10
   options(scipen = 6)
   hip6_figure <- ggplot() +
-    geom_line(data = hip6, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(acc_actual_daily_reward), color = "Observed"), size=1.6) +
-    geom_line(data = hip6, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(acc_expected_daily_reward), color = "Expected"), size=1.3, linetype = "dashed") +
+    geom_line(data = hip6, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(acc_actual_daily_reward), color = "Observed"), size = 1.6) +
+    geom_line(data = hip6, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(acc_expected_daily_reward), color = "Expected"), size = 1.3, linetype = "dashed") +
     scale_color_manual(name = "Issuance", values = c("Observed" = g_color1, "Expected" = g_color2)) +
     scale_y_continuous(
       # labels = scales::comma,
@@ -1136,11 +1170,10 @@ gen_graph_hip6 <- function() {
     ) +
     xlab("Time") +
     ylab("Issued DCRs") +
-    # ggtitle("Expected and actual Decred issuance") +
     theme_bw() + 
     theme(
-      text = element_text(size=24),
-      legend.position="bottom"
+      text = element_text(size = 24),
+      legend.position = "bottom"
     )
 
   save_figure(hip6_figure, "hip6_figure.png", 1024, 768)
@@ -1153,19 +1186,19 @@ gen_graph_hip7 <- function() {
   id_labels <- data.frame(hip7$day, hip7$dcr_price_close)
 
   hip7_figure <- ggplot() +
-    geom_line(data = subset(dcr_usd_price, day >= str_genesis_date & day < str_final_date), aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(dcr_price_close), color = "Decred"), size=0.4) +
+    geom_line(data = subset(dcr_usd_price, day >= str_genesis_date & day < str_final_date), aes(x=as.Date(day, format = "%Y-%m-%d"), y=as.numeric(dcr_price_close), color = "Decred"), size=0.4) +
     scale_color_manual(name = "Price", values = c("Bitcoin" = g_color1, "Decred" = g_color1)) +
     scale_y_continuous(
         name = "Decred Price (Close) in USD"  # first axis
     ) +
-    geom_point(data=id_labels, aes(x=hip7.day, y=hip7.dcr_price_close, size=3.0), color=g_color2) +
+    geom_point(data=id_labels, aes(x = hip7.day, y = hip7.dcr_price_close, size = 3.0), color = g_color2) +
     xlab("Time") +
     theme_bw() + 
     theme(
-      text = element_text(size=24),
+      text = element_text(size = 24),
       axis.title.y = element_text(color = g_color1),
       axis.title.y.right = element_text(color = g_color2),
-      legend.position=""
+      legend.position = ""
     )
 
   save_figure(hip7_figure, "hip7_figure.png", 1024, 768)
@@ -1176,23 +1209,23 @@ gen_graph_hip8 <- function() {
   coeff <- 0.01
   options(scipen = 6)
   hip8_figure <- ggplot() +
-    geom_line(data = hip8, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(btc_price_close), color = "Bitcoin"), size=0.4) +
-    geom_line(data = hip8, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(dcr_price_close / coeff), color = "Decred"), size=0.4) +
+    geom_line(data = hip8, aes(x = as.Date(day, format= "%Y-%m-%d"), y = as.numeric(btc_price_close), color = "Bitcoin"), size = 0.4) +
+    geom_line(data = hip8, aes(x = as.Date(day, format= "%Y-%m-%d"), y = as.numeric(dcr_price_close / coeff), color = "Decred"), size = 0.4) +
     scale_color_manual(name = "Price", values = c("Bitcoin" = g_color1, "Decred" = g_color2)) +
     scale_y_continuous(
         name = "Bitcoin Price (Close) in USD",                                 # first axis
-        sec.axis = sec_axis(~.*coeff, name="Decred Price (Close) in USD")      # second axis
+        sec.axis = sec_axis(~. * coeff, name = "Decred Price (Close) in USD")      # second axis
     ) +
-    geom_vline(xintercept=as.Date('2018-06-01', format="%Y-%m-%d"), colour=g_color1, linetype = "dashed") +
-    annotate("text", x=as.Date('2018-06-01', format="%Y-%m-%d"), y=1800, label="Before ASIC devices\n", size=5, colour=g_color3, angle=90) +
-    annotate("text", x=as.Date('2018-06-01', format="%Y-%m-%d"), y=1800, label="\nAfter ASIC devices", size=5, colour=g_color2, angle=90) +
+    geom_vline(xintercept = as.Date('2018-06-01', format = "%Y-%m-%d"), colour = g_color1, linetype = "dashed") +
+    annotate("text", x = as.Date('2018-06-01', format = "%Y-%m-%d"), y = 1800, label = "Before ASIC devices\n", size = 5, colour = g_color3, angle = 90) +
+    annotate("text", x = as.Date('2018-06-01', format = "%Y-%m-%d"), y = 1800, label = "\nAfter ASIC devices", size = 5, colour = g_color2, angle = 90) +
     xlab("Time") +
     theme_bw() + 
     theme(
-      text = element_text(size=24),
+      text = element_text(size = 24),
       axis.title.y = element_text(color = g_color1),
       axis.title.y.right = element_text(color = g_color2),
-      legend.position="bottom"
+      legend.position = "bottom"
     )
 
   save_figure(hip8_figure, "hip8_figure.png", 1024, 768)
@@ -1211,10 +1244,10 @@ gen_graph_hip9 <- function() {
   hip9_figure <- ggplot(data = df_long, aes(x = token, y = value, fill = variable, label = "")) +
     geom_bar(stat = "identity") +
     geom_text(size = 3, position = position_stack(vjust = 0.5)) +
-    geom_hline(yintercept=quorum, colour=g_color1) +
-    geom_hline(yintercept=quorum_min, colour=g_color1, linetype = "dashed") +
-    geom_hline(yintercept=quorum_max, colour=g_color1, linetype = "dashed") +
-    annotate("label", x=6, y=quorum, label="Quorum", size=6, colour="white", fill = g_color1, angle=0) +
+    geom_hline(yintercept = quorum, colour = g_color1) +
+    geom_hline(yintercept = quorum_min, colour = g_color1, linetype = "dashed") +
+    geom_hline(yintercept = quorum_max, colour = g_color1, linetype = "dashed") +
+    annotate("label", x = 6, y = quorum, label = "Quorum", size = 6, colour = "white", fill = g_color1, angle = 0) +
     xlab("Proposals") +
     ylab("Votes") +
     labs(fill = "Choice") +
@@ -1225,21 +1258,25 @@ gen_graph_hip9 <- function() {
     ) +
     theme_bw() + 
     theme(
-      text = element_text(size=24),
+      text = element_text(size = 24),
       axis.text.x = element_blank(),
       axis.title.y = element_text(color = g_color1),
       axis.title.y.right = element_text(color = g_color2),
-      legend.position="right",
+      legend.position = "right",
       legend.direction = "vertical"
     )
 
   save_figure(hip9_figure, "hip9_figure.png", 1124, 768)
+
+  append_text_results(paste("Hip. 9 N Proposals:", nrow(dcr_g_vote_total_number)))
+  append_text_results(paste("Hip. 9 Average daily ticket pool size:", round(avg_ticket_poolsize, 4)))
+  append_text_results(paste("Hip. 9 Average proposal turnout:", round(avg_proposal_turnout, 4)))
+  append_text_results(paste("Hip. 9 Average proposal approval:", round(avg_proposal_approval, 4)))
+  append_text_results(paste("Hip. 9 Prososals with different winning days:", round(avg_proposal_approval, 4)))
 }
 
 gen_graph_hip9_agenda <- function() {
   quorum <- as.numeric(8064 * 5 * 0.1)
-  #quorum_min <- as.numeric(quorum - 200)
-  #quorum_max <- as.numeric(quorum + 200)
   
   # Depends on how many tickets were live on the previous week.
   # Here the average of live tickets in the pool is used to calculate an approximate quorum for all proposals.
@@ -1249,8 +1286,8 @@ gen_graph_hip9_agenda <- function() {
     geom_bar(stat = "identity", width = 0.3, position = position_stack(reverse = TRUE)) +
     scale_fill_manual(values = c("yes" = "#00BFC4", "no" = "#FF866D", "abs" = "#619CFF")) +
     geom_text(size = 3, position = position_stack(vjust = 0.5)) +
-    geom_hline(yintercept=quorum, colour=g_color1) +
-    annotate("label", x=1, y=quorum, label="Quorum", size=6, colour="white", fill = g_color1, angle=0) +
+    geom_hline(yintercept = quorum, colour = g_color1) +
+    annotate("label", x = 1, y = quorum, label = "Quorum", size = 6, colour = "white", fill = g_color1, angle = 0) +
     xlab("Agendas") +
     ylab("Votes") +
     labs(fill = "Choice") +
@@ -1259,18 +1296,23 @@ gen_graph_hip9_agenda <- function() {
       # breaks = c(10000, 20000, 30000, 40000),
       labels = function(x) format(x, big.mark = " ", scientific = FALSE)
     ) +
-    # ggtitle("Bitcoin and Decred price variance") +
     theme_bw() + 
     theme(
-      text = element_text(size=24),
+      text = element_text(size = 24),
       #axis.text.x = element_blank(),
       axis.title.y = element_text(color = g_color1),
       axis.title.y.right = element_text(color = g_color2),
-      legend.position="right",
+      legend.position = "right",
       legend.direction = "vertical"
     )
 
   save_figure(hip9_agendas_figure, "hip9_agendas_figure.png", 1124, 768)
+
+  append_text_results(paste("Hip. 9 N Agendas:", nrow(dcr_g_vote_total_number)))
+  append_text_results(paste("Hip. 9 Average daily ticket pool size:", round(avg_ticket_poolsize, 4)))
+  append_text_results(paste("Hip. 9 Average proposal turnout:", round(avg_proposal_turnout, 4)))
+  append_text_results(paste("Hip. 9 Average proposal approval:", round(avg_proposal_approval, 4)))
+  append_text_results(paste("Hip. 9 Prososals with different winning days:", round(avg_proposal_approval, 4)))
 }
 
 # Graph BTC DCR comparison:
@@ -1278,12 +1320,12 @@ gen_graph_btc_dcr_comparison <- function() {
   coeff <- 10
   options(scipen = 6)
   btc_dcr_figure <- ggplot() +
-    geom_line(data = btc_exp_issuance_by_day, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(acc_sum), color = "Bitcoin"), size=0.7) +
-    geom_line(data = dcr_exp_issuance_by_day, aes(x=as.Date(day, format= "%Y-%m-%d"), y=as.numeric(acc_sum), color = "Decred"), size=0.7) +
+    geom_line(data = btc_exp_issuance_by_day, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(acc_sum), color = "Bitcoin"), size = 0.7) +
+    geom_line(data = dcr_exp_issuance_by_day, aes(x = as.Date(day, format = "%Y-%m-%d"), y = as.numeric(acc_sum), color = "Decred"), size = 0.7) +
     scale_color_manual(name = "Expected Issuance", values = c("Bitcoin" = g_color1, "Decred" = g_color2)) +
     scale_y_continuous(
       # labels = scales::comma,
-      breaks = c(0,2000000, 4000000, 6000000, 8000000, 10000000, 12000000, 14000000, 16000000, 18000000, 20000000),
+      breaks = c(0, 2000000, 4000000, 6000000, 8000000, 10000000, 12000000, 14000000, 16000000, 18000000, 20000000),
       labels = function(x) format(x, big.mark = " ", scientific = FALSE)
     ) +
     # BTC DCR Comparison: Last: DCR: 20638308.2075263  - BTC:  20887554.296875
@@ -1292,16 +1334,19 @@ gen_graph_btc_dcr_comparison <- function() {
     # ggtitle("Bitcoin and Decred estimated supply growth curve until June 2039") +
     theme_bw() + 
     theme(
-      text = element_text(size=20),
-      legend.position="bottom"
+      text = element_text(size = 20),
+      legend.position = "bottom"
     )
 
   save_figure(btc_dcr_figure, "btc_dcr_figure.png", 1024, 568)
+
+  append_text_results(paste("\nBTC DCR Comparison: DCR:", nrow(dcr_exp_issuance_by_day), " - BTC: ", nrow(btc_exp_issuance_by_day)))
+  append_text_results(paste("BTC DCR Comparison: Last: DCR:", dcr_exp_issuance_by_day[nrow(dcr_exp_issuance_by_day):nrow(dcr_exp_issuance_by_day),3], " - BTC: ", btc_exp_issuance_by_day[nrow(btc_exp_issuance_by_day):nrow(btc_exp_issuance_by_day),3]))
 }
 
 # Calculate the security curve
 gen_sec_curve <- function() {
-  sec_curve <- data.frame(pos_share=seq(from=0.001, to=0.80, by=0.001))
+  sec_curve <- data.frame(pos_share = seq(from = 0.001, to = 0.80, by = 0.001))
   # A 'for loop' must be used because of sum() below, otherwise it sums all rows
   for (row in 1:nrow(sec_curve)) {
     sec_curve[row, "x_hashpower"] = as.numeric(1 / sum(dbinom(0:2, 5, (1 - sec_curve[row, "pos_share"])))) - 1
@@ -1313,7 +1358,7 @@ gen_sec_curve <- function() {
 gen_graph_sec_curve <- function() {
   options(scipen = 6)
   sec_curve_figure <- ggplot() +
-    geom_line(data = sec_curve, aes(x=as.numeric(pos_share), y=as.numeric(x_hashpower), color = "PoW+PoS"), size=0.8) +
+    geom_line(data = sec_curve, aes(x = as.numeric(pos_share), y = as.numeric(x_hashpower), color = "PoW+PoS"), size = 0.8) +
     scale_color_manual(name = "Security Curve", values = c("PoW+PoS" = g_color2)) +
     scale_y_continuous(
       # labels = scales::comma,
@@ -1329,7 +1374,7 @@ gen_graph_sec_curve <- function() {
     ylab("Attacker required hashpower (PoW)\n(multiple of honest adversaries' hashpower)") +
     theme_bw() + 
     theme(
-      text = element_text(size=20),
+      text = element_text(size = 20),
       legend.position = "bottom"
     )
 
@@ -1382,11 +1427,12 @@ main <- function() {
   print("Calculating econometric model...")
   calc_econ_model()
 
-  print("Writing text information to text file...")
-  output_text_results()
+  # Copy text results filename to global variable file_list
+  file_list <- c(file_list, str_textfilename)
+  file_list <<- file_list
 
   print("All done.")
-  print(paste(c("Generated files:", file_list), collapse=", "))
+  print(paste(c("Generated files:", file_list), collapse = ", "))
 }
 
 main()
