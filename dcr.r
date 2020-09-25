@@ -23,9 +23,13 @@
 # [1] '4.1.15'
 # > packageVersion("rpart.plot")
 # [1] '3.0.8'
+# > packageVersion("rsample")
+# [1] '0.0.7'
+# > packageVersion("caret")
+# [1] '6.0.86'
 
 # This script requires the following libraries, to install:
-list.of.packages <- c("plyr", "ggplot2", "dplyr", "patchwork", "corrplot", "gplots", "rpart", "rpart.plot")
+list.of.packages <- c("plyr", "ggplot2", "dplyr", "patchwork", "corrplot", "gplots", "rpart", "rpart.plot", "rsample", "caret")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 
@@ -54,6 +58,8 @@ print_version <- function() {
   print(paste("gplots:", packageVersion("gplots")))
   print(paste("rpart:", packageVersion("rpart")))
   print(paste("rpart.plot:", packageVersion("rpart.plot")))
+  print(paste("rsample:", packageVersion("rsample")))
+  print(paste("caret:", packageVersion("caret")))
 }
 
 define_variables <- function() {
@@ -102,6 +108,7 @@ prepare_dataframes <- function() {
   # Daily
   dcr_d_actual_coin_issuance <<- read.table(paste0(str_basedir, "psql_daily_coin-issuance.csv"), header = TRUE, sep = ",")
   dcr_d_fees_diff_tx <<- read.table(paste0(str_basedir, "psql_daily_fees-difficulty-txcount.csv"), header = TRUE, sep = ",")
+  dcr_d_transaction_volume <<- read.table(paste0(str_basedir, "psql_daily_transactions-volume.csv"), header = TRUE, sep = ",")
   dcr_d_ticket_price_pool_size <<- read.table(paste0(str_basedir, "psql_daily_ticket-price_pool-size.csv"), header = TRUE, sep = ",")
   dcr_d_voters_difficulty <<- read.table(paste0(str_basedir, "psql_daily_voters_difficulty.csv"), header = TRUE, sep = ",")
   dcr_d_block_time <<- read.table(paste0(str_basedir, "psql_daily_block-time-historical-average.csv"), header = TRUE, sep = ",")
@@ -310,6 +317,15 @@ process_dataframes <- function() {
   ticket_draw_freq <- within(ticket_draw_freq, perc_acc_sum <- cumsum(perc_freq))
   ticket_draw_freq <<- ticket_draw_freq
 
+  # Clean up daily transaction count and volume (dcr_d_transaction_volume), used in calc_econ_model()
+  dcr_d_transaction_volume$day <- as.Date(as.character(dcr_d_transaction_volume$day), format = "%Y-%m-%d")
+  dcr_d_transaction_volume$tx_count = as.numeric(dcr_d_transaction_volume$tx_count)
+  dcr_d_transaction_volume$sum_sent = as.numeric(dcr_d_transaction_volume$sum_sent)
+  dcr_d_transaction_volume$sum_fees = as.numeric(dcr_d_transaction_volume$sum_fees)
+  dcr_d_transaction_volume <- subset(dcr_d_transaction_volume, day >= str_genesis_date & day <= str_final_date)
+  rownames(dcr_d_transaction_volume) <- 1:nrow(dcr_d_transaction_volume)
+  dcr_d_transaction_volume <<- dcr_d_transaction_volume
+
   ### DCR and BTC prices and difficulty
   # Source DCR-USD: https://finance.yahoo.com/quote/DCR-USD/history?period1=1454716800&period2=1586131200&interval=1d&filter=history&frequency=1d
   # DCR daily prices in USD
@@ -388,7 +404,7 @@ process_dataframes <- function() {
 
   #dcr_d_network_funding$day <- as.Date(as.character(dcr_d_network_funding$day), format = "%Y-%m-%d")
   #dcr_d_pos_rewards$day <- as.Date(as.character(dcr_d_pos_rewards$day), format = "%Y-%m-%d")
-  #dcr_d_transactions_volume$day <- as.Date(as.character(dcr_d_transactions_volume$day), format = "%Y-%m-%d")
+  #dcr_d_transaction_volume$day <- as.Date(as.character(dcr_d_transaction_volume$day), format = "%Y-%m-%d")
 
   append_csv_results(dcr_g_voters_block_count_summary)  # Write mode, no append, to reset the file
   append_text_results(paste("\nAverage block per day:", round(avg_block_per_day, 4)))
@@ -826,7 +842,7 @@ calc_hip8 <- function() {
   append_text_results(paste("Hip. 8 Part 2 Chi-Sq: X-squared:", gsub("[\r\n]", " ", hip8_part2_chisq$statistic), "p-value:", hip8_part2_chisq$p.value, "\n"))
 }
 
-#### Econ Model
+#### OLS model
 
 # Called inside calc_econ_model()
 cor.mtest <- function(mat) {
@@ -845,41 +861,131 @@ cor.mtest <- function(mat) {
 }
 
 # Called inside calc_econ_model()
-r_tree <- function() {
+r_tree <- function(user_seed = 456) {
   library(rpart)       # to create regression trees
   library(rpart.plot)  # to plot regression trees
+  library(rsample)     # to sample the data into training and testing
 
-  r_dcr_price <- rpart(
-    formula = dcr_price_close ~ .,
-    data    = e2_p2,
-    method  = "anova", 
-    control = list(minsplit = 10, maxdepth = 12, xval = 10)
+  # Define sample for training and testing
+  ifelse (user_seed > 0, seed <- user_seed, seed <- 456)
+  set.seed(seed)       # Set seed for reproducibility
+  dcr_split <- initial_split(e2_p2, prop = .7)
+  dcr_train <- training(dcr_split)
+  dcr_test  <- testing(dcr_split)
+
+  # Tuning --> https://uc-r.github.io/regression_trees
+  hyper_grid <- expand.grid(
+    minsplit = seq(5, 20, 1),
+    maxdepth = seq(6, 20, 1)
   )
 
-  append_text_results("\nRegression Tree Summary:\n")
-  r_tree_summary <<- rpart.rules(r_dcr_price, cover = TRUE, roundint = FALSE, digits = 4, varlen = 0, faclen = 0)
-  save_figure(rpart.plot(r_dcr_price, roundint = FALSE, digits = 4), "econ_model_regression_tree_figure.png", 1024, 768)
-  sink_text_results(r_tree_summary)
+  models <- list()
+  for (i in 1:nrow(hyper_grid)) {
+    minsplit <- hyper_grid$minsplit[i]
+    maxdepth <- hyper_grid$maxdepth[i]
+
+    # train a model and store in the list
+    models[[i]] <- rpart(
+      formula = dcr_price_close ~ .,
+      data    = dcr_train,
+      method  = "anova",
+      control = list(minsplit = minsplit, maxdepth = maxdepth)
+      )
+  }
+
+  # Get optimal cp (used below)
+  get_cp <- function(x) {
+    min <- which.min(x$cptable[, "xerror"])
+    cp  <- x$cptable[min, "CP"] 
+  }
+
+  # Get minimum error (used below)
+  get_min_error <- function(x) {
+    min    <- which.min(x$cptable[, "xerror"])
+    xerror <- x$cptable[min, "xerror"] 
+  }
+
+  # Find the combination with the least amount of error
+  hyper_grid_mutate <<- hyper_grid %>%
+    mutate(
+      cp    = purrr::map_dbl(models, get_cp),
+      error = purrr::map_dbl(models, get_min_error)
+      ) %>%
+    arrange(error) %>%
+    top_n(-5, wt = error)
+
+  # Use the top combination to draw the optimal regression tree
+  optimal_minsplit <- hyper_grid_mutate[1, 1]
+  optimal_maxdepth <- hyper_grid_mutate[1, 2]
+  optimal_cp <- hyper_grid_mutate[1, 3]
+  optimal_tree <- rpart(
+      formula = dcr_price_close ~ .,
+      data    = dcr_train,
+      method  = "anova",
+      control = list(minsplit = optimal_minsplit, maxdepth = optimal_maxdepth, cp = optimal_cp)
+      )
+
+  # Mean Absolute Error
+  pred <- predict(optimal_tree, newdata = dcr_test)
+  mean_abs_err <- mean(abs(pred - dcr_test$dcr_price_close))
+
+  # Bagging
+  library(caret)
+  ctrl <- trainControl(method = "cv",  number = 10)   # Specify 10-fold cross validation
+
+  # CV bagged model
+  bagged_cv <- caret::train(
+    dcr_price_close ~ .,
+    data = dcr_train,
+    method = "rpart",
+    trControl = ctrl,
+    tuneLength = 50,
+    control = list(minsplit = optimal_minsplit, maxdepth = optimal_maxdepth, cp = optimal_cp)
+    )
+
+  bagged_cv <<- bagged_cv
+  bagged_cv_varimp <<- varImp(bagged_cv)
+
+  # Output results, optimal regression tree
+  append_text_results("\nRegression Tree, Rules:\n")
+  r_tree_rules <<- rpart.rules(optimal_tree, cover = TRUE, roundint = FALSE, digits = 4, varlen = 0, faclen = 0)
+  save_figure(rpart.plot(optimal_tree, roundint = FALSE, digits = 4), "econ_model_regression_tree_figure.png", 960, 630)
+  sink_text_results(r_tree_rules)
+  append_text_results("\nRegression Tree, Variable Importance:\n")
+  sink_text_results(optimal_tree$variable.importance)
+  append_text_results(paste("\nRegression Tree, Mean Absolute Error:", mean_abs_err))
+
+  # Output results, bagging regression tree
+  append_text_results("\nRegression Tree, Bagging:")
+  save_figure(rpart.plot(bagged_cv$finalModel, roundint = FALSE, digits = 4), "econ_model_regression_tree_baggedcv_figure.png", 960, 630)
+  sink_text_results(bagged_cv)
+  append_text_results("\nRegression Tree, Bagging Rules:\n")
+  baggedcv_rules <- rpart.rules(bagged_cv$finalModel, cover = TRUE, roundint = FALSE, digits = 4, varlen = 0, faclen = 0)
+  sink_text_results(baggedcv_rules)
+  append_text_results("\nRegression Tree, Bagging Variable Importance:\n")
+  sink_text_results(bagged_cv_varimp)
 }
 
 # OLS model:
 calc_econ_model <- function() {
   econ_model <- dcr_usd_price
   econ_model$day <- as.Date(as.character(econ_model$day), format = "%Y-%m-%d")
-  econ_model <- merge(econ_model, dcr_d_actual_coin_issuance[, c("day", "sum_total_reward")], by="day", all=TRUE)
-  econ_model <- merge(econ_model, dcr_d_voters_difficulty[, c("day", "avg_hashrate")], by="day", all=TRUE)
-  econ_model <- merge(econ_model, dcr_d_circ_staked[, c("day", "perc_staked")], by="day", all=TRUE)
+  econ_model <- merge(econ_model, dcr_d_actual_coin_issuance[, c("day", "sum_total_reward")], by = "day", all = TRUE)
+  econ_model <- merge(econ_model, dcr_d_voters_difficulty[, c("day", "avg_hashrate")], by = "day", all = TRUE)
+  econ_model <- merge(econ_model, dcr_d_circ_staked[, c("day", "perc_staked")], by = "day", all = TRUE)
+  econ_model <- merge(econ_model, dcr_d_transaction_volume[, c("day", "tx_count", "sum_sent")], by = "day", all = TRUE)
   econ_model <- subset(econ_model, day >= str_genesis_date & day <= str_final_date)
   colnames(econ_model)[3] <- "obs_coin_issuance"
   colnames(econ_model)[4] <- "obs_avg_hashrate"
+  colnames(econ_model)[7] <- "tx_sum"
   rownames(econ_model) <- 1:nrow(econ_model)
   econ_model_part1 <- subset(econ_model, day >= str_genesis_date & day <= "2018-12-31")
   econ_model_part2 <- subset(econ_model, day >= "2019-01-01" & day <= str_final_date)
 
   ## Correlations
-  e2 <- econ_model[, 2:5]
-  e2_p1 <- econ_model_part1[, 2:5]
-  e2_p2 <- econ_model_part2[, 2:5]
+  e2 <- econ_model[, 2:7]
+  e2_p1 <- econ_model_part1[, 2:7]
+  e2_p2 <- econ_model_part2[, 2:7]
   e2_p1_cor_mat <- as.matrix(cor(e2_p1))
   e2_p2_cor_mat <- as.matrix(cor(e2_p2))
   e2 <<- e2
@@ -892,8 +998,8 @@ calc_econ_model <- function() {
 
   ## Heatmap
   econ_model_cor <- cor(e2_p2)
-  colnames(econ_model_cor) <- c("Price", "Coin Issuance", "Avg Hashrate", "Staked Percentage")
-  rownames(econ_model_cor) <- c("Price", "Coin Issuance", "Avg Hashrate", "Staked Percentage")
+  colnames(econ_model_cor) <- c("Price", "Coin Issuance", "Hashrate", "Staked Percentage", "Transaction Count", "Transaction Sum")
+  rownames(econ_model_cor) <- c("Price", "Coin Issuance", "Hashrate", "Staked Percentage", "Transaction Count", "Transaction Sum")
   econ_model_cor <<- econ_model_cor
   
   save_figure(
@@ -916,11 +1022,11 @@ calc_econ_model <- function() {
   linear_model_results <- lm(dcr_price_close ~ ., data = e2_p2)
   linear_model_results_summary <- print(summary(linear_model_results))
 
-  linear_model_price_staked <- ggplot(e2_p2, aes(x = dcr_price_close, y = perc_staked)) + 
+  linear_model_price_staked <- ggplot(e2_p2, aes(x = perc_staked, y = dcr_price_close)) + 
     geom_point() +
-    xlab("DCR Price (USD) Close") +
+    xlab("Staked Percentage") +
     scale_y_continuous(
-        name = "Staked Percentage"                              # first axis
+        name = "DCR Price (USD) Close"                              # first axis
     ) +
     theme_bw() +
     theme(
@@ -930,11 +1036,11 @@ calc_econ_model <- function() {
     stat_smooth(method = "lm", col = g_color2)
   save_figure(linear_model_price_staked, "econ_model_linear_price_staked_figure.png", 1024, 768)
 
-  linear_model_price_hashrate <- ggplot(e2_p2, aes(x = dcr_price_close, y = obs_avg_hashrate)) + 
+  linear_model_price_hashrate <- ggplot(e2_p2, aes(x = obs_avg_hashrate, y = dcr_price_close)) + 
     geom_point() +
-    xlab("DCR Price (USD) Close") +
+    xlab("Average Hashrate") +
     scale_y_continuous(
-        name = "Average Hashrate"                              # first axis
+        name = "DCR Price (USD) Close"                              # first axis
     ) +
     theme_bw() +
     theme(
@@ -1272,7 +1378,7 @@ gen_graph_hip9 <- function() {
   append_text_results(paste("Hip. 9 Average daily ticket pool size:", round(avg_ticket_poolsize, 4)))
   append_text_results(paste("Hip. 9 Average proposal turnout:", round(avg_proposal_turnout, 4)))
   append_text_results(paste("Hip. 9 Average proposal approval:", round(avg_proposal_approval, 4)))
-  append_text_results(paste("Hip. 9 Prososals with different winning days:", round(avg_proposal_approval, 4)))
+  append_text_results(paste("Hip. 9 Proposals with different winning days:", round(avg_proposal_approval, 4)))
 }
 
 gen_graph_hip9_agenda <- function() {
@@ -1312,7 +1418,7 @@ gen_graph_hip9_agenda <- function() {
   append_text_results(paste("Hip. 9 Average daily ticket pool size:", round(avg_ticket_poolsize, 4)))
   append_text_results(paste("Hip. 9 Average proposal turnout:", round(avg_proposal_turnout, 4)))
   append_text_results(paste("Hip. 9 Average proposal approval:", round(avg_proposal_approval, 4)))
-  append_text_results(paste("Hip. 9 Prososals with different winning days:", round(avg_proposal_approval, 4)))
+  append_text_results(paste("Hip. 9 Proposals with different winning days:", round(avg_proposal_approval, 4)))
 }
 
 # Graph BTC DCR comparison:
@@ -1390,39 +1496,39 @@ main <- function() {
   prepare_dataframes()
   process_dataframes()
 
-  print("Calculating hypotheses...")
-  calc_hip1()
-  calc_hip2()
-  calc_hip3_dcr()
-  calc_hip3_btc()
-  calc_hip4()
-  calc_hip5()
-  calc_hip6()
-  calc_hip7()
-  calc_hip8()
+   print("Calculating hypotheses...")
+   calc_hip1()
+   calc_hip2()
+   calc_hip3_dcr()
+   calc_hip3_btc()
+   calc_hip4()
+   calc_hip5()
+   calc_hip6()
+   calc_hip7()
+   calc_hip8()
 
-  print("Generating expected coin issuance dataframes...")
-  gen_dcr_exp_issuance()
-  gen_btc_exp_issuance()
+   print("Generating expected coin issuance dataframes...")
+   gen_dcr_exp_issuance()
+   gen_btc_exp_issuance()
 
-  print("Generating figures...")
-  gen_graph_hip1()
-  gen_graph_hip2()
-  gen_graph_hip2_fin()
-  gen_graph_hip3_dcr()
-  gen_graph_hip3_btc()
-  gen_graph_hip4()
-  gen_graph_hip5()
-  gen_graph_hip6()
-  gen_graph_hip7()
-  gen_graph_hip8()
-  gen_graph_hip9()
-  gen_graph_hip9_agenda()
-  gen_graph_btc_dcr_comparison()
+   print("Generating figures...")
+   gen_graph_hip1()
+   gen_graph_hip2()
+   gen_graph_hip2_fin()
+   gen_graph_hip3_dcr()
+   gen_graph_hip3_btc()
+   gen_graph_hip4()
+   gen_graph_hip5()
+   gen_graph_hip6()
+   gen_graph_hip7()
+   gen_graph_hip8()
+   gen_graph_hip9()
+   gen_graph_hip9_agenda()
+   gen_graph_btc_dcr_comparison()
 
-  print("Generating Security Curve figures...")
-  gen_sec_curve()
-  gen_graph_sec_curve()
+   print("Generating Security Curve figures...")
+   gen_sec_curve()
+   gen_graph_sec_curve()
 
   print("Calculating econometric model...")
   calc_econ_model()
