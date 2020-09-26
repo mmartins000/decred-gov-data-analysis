@@ -929,12 +929,12 @@ r_tree <- function(user_seed = 456) {
   pred <- predict(optimal_tree, newdata = dcr_test)
   mean_abs_err <- mean(abs(pred - dcr_test$dcr_price_close))
 
-  # Bagging
+  # Caret, rpart
   library(caret)
   ctrl <- trainControl(method = "cv",  number = 10)   # Specify 10-fold cross validation
 
-  # CV bagged model
-  bagged_cv <- caret::train(
+  # CV model
+  caret_cv <- caret::train(
     dcr_price_close ~ .,
     data = dcr_train,
     method = "rpart",
@@ -943,8 +943,8 @@ r_tree <- function(user_seed = 456) {
     control = list(minsplit = optimal_minsplit, maxdepth = optimal_maxdepth, cp = optimal_cp)
     )
 
-  bagged_cv <<- bagged_cv
-  bagged_cv_varimp <<- varImp(bagged_cv)
+  caret_cv <<- caret_cv
+  caret_cv_varimp <<- varImp(caret_cv)
 
   # Output results, optimal regression tree
   append_text_results("\nRegression Tree, Rules:\n")
@@ -955,15 +955,15 @@ r_tree <- function(user_seed = 456) {
   sink_text_results(optimal_tree$variable.importance)
   append_text_results(paste("\nRegression Tree, Mean Absolute Error:", mean_abs_err))
 
-  # Output results, bagging regression tree
-  append_text_results("\nRegression Tree, Bagging:")
-  save_figure(rpart.plot(bagged_cv$finalModel, roundint = FALSE, digits = 4), "econ_model_regression_tree_baggedcv_figure.png", 960, 630)
-  sink_text_results(bagged_cv)
-  append_text_results("\nRegression Tree, Bagging Rules:\n")
-  baggedcv_rules <- rpart.rules(bagged_cv$finalModel, cover = TRUE, roundint = FALSE, digits = 4, varlen = 0, faclen = 0)
-  sink_text_results(baggedcv_rules)
-  append_text_results("\nRegression Tree, Bagging Variable Importance:\n")
-  sink_text_results(bagged_cv_varimp)
+  # Output results, caret rpart regression tree
+  append_text_results("\nRegression Tree, Caret:")
+  save_figure(rpart.plot(caret_cv$finalModel, roundint = FALSE, digits = 4), "econ_model_regression_tree_baggedcv_figure.png", 960, 630)
+  sink_text_results(caret_cv)
+  append_text_results("\nRegression Tree, Caret Rules:\n")
+  caretcv_rules <- rpart.rules(caret_cv$finalModel, cover = TRUE, roundint = FALSE, digits = 4, varlen = 0, faclen = 0)
+  sink_text_results(caretcv_rules)
+  append_text_results("\nRegression Tree, Caret Variable Importance:\n")
+  sink_text_results(caret_cv_varimp)
 }
 
 # OLS model:
