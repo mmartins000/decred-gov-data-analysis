@@ -27,9 +27,11 @@
 # [1] '0.0.7'
 # > packageVersion("caret")
 # [1] '6.0.86'
+# > packageVersion("Metrics")
+# [1] '0.1.4'
 
 # This script requires the following libraries, to install:
-list.of.packages <- c("plyr", "ggplot2", "dplyr", "patchwork", "corrplot", "gplots", "rpart", "rpart.plot", "rsample", "caret")
+list.of.packages <- c("plyr", "ggplot2", "dplyr", "patchwork", "corrplot", "gplots", "rpart", "rpart.plot", "rsample", "caret", "Metrics")
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 if(length(new.packages)) install.packages(new.packages)
 
@@ -60,6 +62,7 @@ print_version <- function() {
   print(paste("rpart.plot:", packageVersion("rpart.plot")))
   print(paste("rsample:", packageVersion("rsample")))
   print(paste("caret:", packageVersion("caret")))
+  print(paste("Metrics:", packageVersion("Metrics")))
 }
 
 define_variables <- function() {
@@ -865,6 +868,7 @@ r_tree <- function(user_seed = 456) {
   library(rpart)       # to create regression trees
   library(rpart.plot)  # to plot regression trees
   library(rsample)     # to sample the data into training and testing
+  library(Metrics)     # to use rmse()
 
   # Define sample for training and testing
   ifelse (user_seed > 0, seed <- user_seed, seed <- 456)
@@ -928,6 +932,9 @@ r_tree <- function(user_seed = 456) {
   # Mean Absolute Error
   pred <- predict(optimal_tree, newdata = dcr_test)
   mean_abs_err <- mean(abs(pred - dcr_test$dcr_price_close))
+  # Root Mean Square Error (RMSE)
+  rmse_value <- rmse(actual = dcr_test$dcr_price_close, predicted = pred)
+  rmse_value <<- rmse_value
 
   # Caret, rpart
   library(caret)
@@ -954,6 +961,7 @@ r_tree <- function(user_seed = 456) {
   append_text_results("\nRegression Tree, Variable Importance:\n")
   sink_text_results(optimal_tree$variable.importance)
   append_text_results(paste("\nRegression Tree, Mean Absolute Error:", mean_abs_err))
+  append_text_results(paste("\nRegression Tree, Root Mean Square Error (RMSE):", rmse_value))
 
   # Output results, caret rpart regression tree
   append_text_results("\nRegression Tree, Caret:")
